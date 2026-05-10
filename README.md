@@ -7,8 +7,12 @@ session running on my desktop. Built because Anthropic doesn't expose any of
 this through an API; it's computed inside the CLI and only ever rendered to
 the terminal.
 
-<!-- HARDWARE_PHOTO -->
-<!-- DASHBOARD_PHOTO -->
+![Dashboard rendered on the desktop browser](docs/dashboard.png)
+
+<p align="center">
+  <img src="docs/pi-display-1.jpg" alt="Pi screen on the shelf" width="48%">
+  <img src="docs/pi-display-2.jpg" alt="Pi screen close-up" width="48%">
+</p>
 
 ---
 
