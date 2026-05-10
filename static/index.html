@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>claude-monitor</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=VT323&family=IBM+Plex+Mono:wght@400;500;700&display=swap">
+<link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+<div class="stage">
+  <div class="screen" id="screen">
+
+    <div class="bar">
+      <div class="left">
+        <span class="model" id="model">—</span>
+        <span class="sep">·</span>
+        <span class="project" id="project">—</span>
+      </div>
+      <div class="right">
+        <span class="mode" id="mode" title="tap to release pin">auto</span>
+        <span class="live" id="live"><span class="dot"></span>live</span>
+      </div>
+    </div>
+
+    <div class="hero">
+      <div class="hero-cell">
+        <span class="hero-label">5-hour</span>
+        <div class="hero-num" id="five-num">—<span class="pct">%</span></div>
+        <div class="hero-foot">
+          <span id="five-foot-left">weekly <span id="weekly-pct" style="color:var(--fg-hi);font-weight:700">—</span></span>
+        </div>
+      </div>
+      <div class="hero-cell">
+        <span class="hero-label" id="cd-label">resets in</span>
+        <div class="cd" id="cd"><span id="cd-num">—</span><span class="unit" id="cd-unit"></span></div>
+        <div class="hero-foot">
+          <span id="cd-foot-left">—</span>
+          <span class="reset" id="cd-foot-right">—</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="battery-cell">
+      <span class="hero-label">context</span>
+      <div class="battery-head">
+        <div class="pct" id="ctx-num">—<span style="font-size:24px;color:var(--fg);margin-left:4px">%</span></div>
+        <div class="tok" id="ctx-tok">— / —</div>
+      </div>
+      <div class="battery-wrap">
+        <div class="battery-body"><div class="battery-fill" id="ctx-fill" style="width:0%"></div></div>
+        <div class="battery-cap"></div>
+      </div>
+    </div>
+
+    <div class="sessions">
+      <span class="hero-label">other chats · ctx</span>
+      <div class="sessions-list" id="sessions-list">
+        <div class="session-row" style="opacity:0.5;cursor:default"><span class="arrow">·</span><span class="name">— none —</span></div>
+      </div>
+    </div>
+
+    <div class="foot">
+      <div class="stats">
+        <span><span class="k">$</span><span class="v" id="cost">0.00</span></span>
+        <span><span class="k">msgs</span><span class="v" id="msgs">0</span></span>
+        <span><span class="k">ok</span><span class="v" id="scrape-ok">0/0</span></span>
+      </div>
+      <div class="right" id="updated">—</div>
+    </div>
+
+  </div>
+</div>
+
+<script src="/static/app.js"></script>
+</body>
+</html>
