@@ -81,13 +81,18 @@ to actually drive the CLI.
 
 `scrape_usage.py` does this:
 
-1. `winpty.PtyProcess.spawn("claude.cmd", dimensions=(40, 140))` — opens a
-   pseudo-terminal in a hidden window (Windows requires `pywinpty`, not
-   regular `pty`).
+1. `winpty.PtyProcess.spawn(claude_cmd_absolute_path, dimensions=(40, 140))` —
+   opens a pseudo-terminal in a hidden window. Windows needs `pywinpty`, not
+   regular `pty`. The path is resolved via `shutil.which` + `%APPDATA%\\npm`
+   fallback so the scraper works under both interactive shells *and*
+   Scheduled Task contexts (which have a minimal `PATH`).
 2. A background reader thread pumps stdout into a queue (PTY reads are
    blocking).
-3. Wait up to 20s for the `❯` prompt indicator — `claude.cmd` cold-start
-   takes 10–15s as the npm wrapper and node runtime boot.
+3. Wait up to 20s for any of multiple TUI-ready signals (`❯`, `auto mode`,
+   `shift+tab`, `/effort`, `/help`) — checking just `❯` is unreliable because
+   ANSI cursor positioning escapes sometimes interleave the prompt char in
+   ways that don't survive ANSI stripping. Cold-start covers `claude.cmd`'s
+   ~10–15s npm-wrapper + node-runtime boot.
 4. Send `/usage\r`.
 5. Wait for the dialog to render, detected by a tolerant regex
    `\d+(?:\.\d+)?\s*%\s*used` that matches both `"15% used"` and `"15%used"`
@@ -100,11 +105,25 @@ Each scrape takes ~6–8 seconds. The server runs them every 90s on success
 and every 15s on failure, so transient hiccups don't leave the dashboard
 stale.
 
-Plenty of false starts before settling on this approach — the early version
-tried reading `--debug=api` log files for `anthropic-ratelimit-*` response
-headers, which turned out to be empty for OAuth-authenticated requests
-because Claude Code computes window state locally instead of asking the
-server.
+### What the reliability hardening looked like
+
+The first version of this hit ~10% scraper success rate and the dashboard
+showed a silent fallback approximation that diverged from reality by 4×.
+[`TODO.md`](TODO.md) captures the hardening pass:
+
+| Failure mode | Fix |
+|---|---|
+| 8s cold-start window for `❯` was tight | Bumped to 20s; `claude.cmd` cold-start can run 10-15s |
+| Detection required literal `"% used"` (with space), but TUI rendered `"%used"` | Replaced string check with the same tolerant regex the parser uses |
+| `❯` doesn't always survive ANSI stripping | Multi-signal readiness detection (`❯ \| auto mode \| /effort \| ...`) |
+| Single failure stalled the dashboard for 90s | Failure → fast 15s retry; success → 90s cadence |
+| Approximation fallback (prompt-count / hard-coded cap) silently lied when scraper failed | Removed entirely; bars show "—" when no data, foot text shows scraper state |
+| Scheduled Task minimal `PATH` couldn't find `claude.cmd` | Resolve absolute path at startup |
+| Scheduled Task with hidden window denies pywinpty a real console | VBScript launcher (`start-hidden.vbs`) gives `cmd` an invisible-but-real console |
+| Earlier `--debug=api` wrapper approach | Confirmed dead; OAuth requests don't carry `anthropic-ratelimit-*` headers and `/usage` is computed locally. Wrapper + `DebugLogWatcher` removed. |
+
+Plenty of false starts. The reliability story matters more than any single
+fix.
 
 ---
 
@@ -150,13 +169,26 @@ pip install -r requirements.txt
 python server.py
 ```
 
-Open port 8765 on the LAN-private firewall profile.
+Open port 8765 on the LAN-private firewall profile. For unattended boot,
+register a Scheduled Task that runs `start-hidden.vbs` at user logon — see
+`INFO.md`.
 
 **Pi (Raspberry Pi OS):**
 
-Auto-launch Chromium kiosk pointed at `http://<desktop-ip>:8765`. The Pi
-needs zero project code — just a browser. See `INFO.md` for the
-`~/.config/autostart/claude-monitor.desktop` snippet.
+Once the Pi can reach the dashboard server over the LAN, the kiosk setup
+is a single curl-and-pipe from the Pi's shell:
+
+```bash
+curl -s http://<desktop-ip>:8765/static/setup-pi.sh | bash
+```
+
+That installs the Chromium-kiosk autostart entry, points it at the
+dashboard, and reboots. Companion scripts in `static/` handle the rest:
+`fix-pi.sh` (toggle to desktop-autologin boot mode), `nokeyring-pi.sh`
+(suppress the gnome-keyring unlock prompt under autologin),
+`hide-cursor-pi.sh` (install `unclutter`), `diagnose-pi.sh` (print
+session-type / chromium-binary / boot-config so you can tell which
+follow-up is needed).
 
 ---
 

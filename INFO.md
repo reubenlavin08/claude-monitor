@@ -75,37 +75,57 @@ Pi has **zero code** — it's just a browser.
 
 ## Starting the server (after a reboot)
 
-The server does **not** auto-start. You have to launch it manually each boot
-unless you set up a Scheduled Task (see "Auto-start on boot" below).
+The server is registered as a Scheduled Task that runs at user logon, so
+it auto-starts every login. No manual action needed.
 
-### Manual start (preferred for now)
+### How auto-start works
 
-Open **PowerShell** and run:
+| Component | Path |
+|---|---|
+| Scheduled Task | `ClaudeMonitor` (visible in Task Scheduler) |
+| Trigger | At logon, current user |
+| Action | `wscript.exe "C:\Users\User\claude-monitor\start-hidden.vbs"` |
+| `start-hidden.vbs` | Calls `start.bat` with WindowStyle=0 (real console, hidden) |
+| `start.bat` | `cd /d %~dp0 && .venv\Scripts\python.exe server.py >> server.log 2>&1` |
+| Logs | `claude-monitor\server.log` (rotated only manually) |
+
+The VBScript wrapper matters: under a "Hidden" Scheduled Task action, `cmd`
+gets no console at all, which means `pywinpty` can't attach a PTY for the
+spawned `claude.cmd` child — and every scrape attempt times out. The VBS
+launcher gives the bat a *real but invisible* console, which pywinpty needs.
+
+### Manual start (still works)
 
 ```powershell
 cd C:\Users\User\claude-monitor
 .\start.bat
 ```
 
-You should see:
+Or use the PowerShell helpers from your profile: `monitor` to start,
+`monitor-stop` to kill.
+
+### Re-registering / removing the task
+
+```powershell
+# inspect
+Get-ScheduledTask -TaskName "ClaudeMonitor"
+
+# disable / enable
+Disable-ScheduledTask -TaskName "ClaudeMonitor"
+Enable-ScheduledTask -TaskName "ClaudeMonitor"
+
+# remove entirely
+Unregister-ScheduledTask -TaskName "ClaudeMonitor" -Confirm:$false
+```
+
+You should see (when the server starts):
 ```
 Claude monitor on http://0.0.0.0:8765
 Watching: C:\Users\User\.claude\projects
-Caps: 5h=171 msgs, weekly=8209 msgs (override via env)
+Scrape: every 90s on success, 15s on failure
 ```
 
-Test in a browser: http://localhost:8765 — dashboard should load. Real
-`/usage` data appears within ~15 seconds (first scrape).
-
-### Auto-start on boot (optional)
-
-Open Task Scheduler → Create Task:
-- Trigger: At log on
-- Action: Start a program
-- Program: `C:\Users\User\claude-monitor\start.bat`
-- Start in: `C:\Users\User\claude-monitor`
-- "Run with highest privileges" → unchecked
-- "Hidden" → checked (so the console doesn't pop up)
+Real `/usage` data appears within ~15 seconds (first scrape).
 
 ---
 

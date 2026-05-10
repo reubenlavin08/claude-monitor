@@ -25,7 +25,9 @@ html, body {
   font-feature-settings: 'tnum';
   -webkit-font-smoothing: antialiased;
   overflow: hidden;
+  cursor: none;
 }
+* { cursor: none !important; }
 
 .stage {
   width: 100vw;

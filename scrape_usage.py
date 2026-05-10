@@ -16,8 +16,10 @@ Returns a dict with parsed values, or {"error": ...} on failure.
 """
 from __future__ import annotations
 
+import os
 import queue
 import re
+import shutil
 import threading
 import time
 from typing import Any
@@ -28,15 +30,48 @@ except ImportError:
     PtyProcess = None
 
 
+def _resolve_claude_cmd() -> str:
+    """Find the absolute path to claude.cmd. Required because the server may
+    run under a Scheduled Task with a minimal PATH that omits %APPDATA%\\npm."""
+    override = os.environ.get("CLAUDE_MONITOR_CLAUDE_CMD")
+    if override and os.path.isfile(override):
+        return override
+    found = shutil.which("claude.cmd") or shutil.which("claude")
+    if found:
+        return found
+    appdata = os.environ.get("APPDATA")
+    if appdata:
+        candidate = os.path.join(appdata, "npm", "claude.cmd")
+        if os.path.isfile(candidate):
+            return candidate
+    return "claude.cmd"  # last-resort: hope PATH works
+
+
+CLAUDE_CMD = _resolve_claude_cmd()
+
+
 ANSI_RE = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]|\x1b\][^\x07]*\x07|\x1b[=>]")
 
 # The /usage dialog renders with TUI spacing quirks ("16%used" / "16% used")
 # so detect with a tolerant regex that matches what the parser will accept.
 DIALOG_RENDERED_RE = re.compile(r"\d+(?:\.\d+)?\s*%\s*used", re.IGNORECASE)
 
+# Multiple signals that Claude Code's TUI is fully rendered and ready for
+# input. We don't rely solely on "❯" because ANSI cursor positioning can
+# interleave the prompt char with escape sequences in ways that don't survive
+# ANSI stripping. Match any of these in the compacted (whitespace-collapsed,
+# lowercased) buffer — TUI rendering eats spaces unpredictably.
+READY_MARKERS = ["❯", "automode", "shift+tab", "/effort", "/help"]
+
 
 def strip_ansi(s: str) -> str:
     return ANSI_RE.sub("", s)
+
+
+def _is_ready(buf: str) -> bool:
+    plain = strip_ansi(buf).lower()
+    compact = re.sub(r"\s+", "", plain)
+    return any(m in compact for m in (m.lower() for m in READY_MARKERS))
 
 
 def parse_dialog(text: str) -> dict[str, Any]:
@@ -86,7 +121,7 @@ def scrape(timeout: float = 45.0, debug_path: str | None = None) -> dict[str, An
 
     proc = None
     try:
-        proc = PtyProcess.spawn("claude.cmd", dimensions=(40, 140))
+        proc = PtyProcess.spawn(CLAUDE_CMD, dimensions=(40, 140))
     except Exception as e:
         return {"error": f"spawn failed: {e}", "error_kind": "spawn_failed"}
 
@@ -118,21 +153,21 @@ def scrape(timeout: float = 45.0, debug_path: str | None = None) -> dict[str, An
         return out
 
     try:
-        # 1. Wait for the prompt indicator "❯" — that's claude saying it's ready for input.
-        # 20s budget: claude.cmd cold-start can take 10-15s on first launch (npm wrapper,
-        # node boot, TUI init), and a tight 8s deadline was causing every first scrape
-        # after server boot to fail.
+        # 1. Wait for any signal that the TUI is fully rendered and ready for
+        # input. See READY_MARKERS — multi-signal detection because the "❯"
+        # prompt char doesn't always survive ANSI stripping. 20s budget covers
+        # claude.cmd cold-start (npm wrapper + node boot + TUI init).
         ready_deadline = time.time() + 20.0
         ready = False
         while time.time() < ready_deadline:
             buf += drain(0.4)
-            if "❯" in buf:
+            if _is_ready(buf):
                 ready = True
                 # Let any remaining welcome render finish
                 buf += drain(0.6)
                 break
 
-        if not ready and "❯" not in strip_ansi(buf):
+        if not ready:
             return {
                 "error": "claude prompt never appeared",
                 "error_kind": "prompt_timeout",

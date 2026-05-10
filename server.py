@@ -92,12 +92,17 @@ class TranscriptCache:
         """Parse one JSONL into:
           - asst_msgs: assistant turns (with usage), used for context/cost/tokens
           - user_prompts: real user-typed messages (excludes tool_result turns)
-          - title: first user-typed text, truncated
+          - title: best available title — /rename customTitle > ai-generated
+            aiTitle > first user-typed prompt (truncated)
           - cwd: working directory recorded in any line
+        Custom-title and ai-title entries can appear many times as the session
+        evolves; we keep the LAST one of each.
         """
         asst_msgs: list[dict] = []
         user_prompts: list[dict] = []
-        title = ""
+        first_prompt_title = ""
+        custom_title = ""
+        ai_title = ""
         cwd = ""
 
         try:
@@ -112,10 +117,24 @@ class TranscriptCache:
                         continue
                     if not cwd:
                         cwd = obj.get("cwd", "") or cwd
+                    typ = obj.get("type", "")
+
+                    # Title-bearing entries don't carry timestamps; check those first
+                    # so the no-timestamp guard below doesn't drop them.
+                    if typ == "custom-title":
+                        ct = obj.get("customTitle", "")
+                        if ct:
+                            custom_title = ct
+                        continue
+                    if typ == "ai-title":
+                        at = obj.get("aiTitle", "")
+                        if at:
+                            ai_title = at
+                        continue
+
                     ts = parse_ts(obj.get("timestamp", ""))
                     if ts == 0.0:
                         continue
-                    typ = obj.get("type", "")
                     msg = obj.get("message") or {}
 
                     if typ == "assistant":
@@ -135,12 +154,14 @@ class TranscriptCache:
                         if text is None:
                             continue  # tool_result turn, skip
                         user_prompts.append({"ts": ts, "text": text})
-                        if not title and text:
-                            # truncate
+                        if not first_prompt_title and text:
                             t = text.strip().replace("\n", " ")
-                            title = t if len(t) <= 60 else t[:57] + "..."
+                            first_prompt_title = t if len(t) <= 60 else t[:57] + "..."
         except OSError:
             pass
+
+        # Priority: user-renamed > AI-generated > first prompt
+        title = custom_title or ai_title or first_prompt_title
 
         return {
             "mtime":        mtime,
@@ -287,7 +308,18 @@ class ScrapeState:
         self.attempts += 1
         loop = asyncio.get_running_loop()
         try:
-            result = await loop.run_in_executor(self.executor, scrape_usage.scrape)
+            # Pass a debug path so we can inspect what claude.cmd actually
+            # produced when a scrape fails — useful when the scheduled-task
+            # environment behaves differently from interactive PowerShell.
+            debug_path = str(Path.home() / "claude-monitor" / "debug-logs" / "last-scrape.txt")
+            try:
+                Path(debug_path).parent.mkdir(parents=True, exist_ok=True)
+            except OSError:
+                debug_path = None
+            result = await loop.run_in_executor(
+                self.executor,
+                lambda: scrape_usage.scrape(debug_path=debug_path),
+            )
             duration = time.time() - self.scrape_started_at
             self.last_duration = duration
             if result and "five_hour_pct" in result:
@@ -296,13 +328,17 @@ class ScrapeState:
                 self.last_error = ""
                 self.successes += 1
                 self.total_duration += duration
-                # Record the very first successful 5h % so we can show drift
                 if self.first_5h_pct is None:
                     self.first_5h_pct = float(result["five_hour_pct"])
                     self.first_5h_at = self.last_scrape_at
                 return True
             else:
-                self.last_error = result.get("error", "no data") if isinstance(result, dict) else "scrape failed"
+                err = result.get("error", "no data") if isinstance(result, dict) else "scrape failed"
+                tail = result.get("tail", "") if isinstance(result, dict) else ""
+                self.last_error = err
+                if tail:
+                    # Stash the tail snippet so we can diagnose remotely.
+                    self.last_error = f"{err} | tail: {tail[-160:]!r}"
                 self.failures += 1
                 return False
         except Exception as e:
@@ -579,12 +615,31 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(lifespan=lifespan)
 STATIC_DIR = Path(__file__).parent / "static"
-app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+
+
+# No-cache headers on every static asset so the Pi's kiosk Chromium always
+# picks up frontend changes on reload instead of holding onto a stale build.
+NO_CACHE_HEADERS = {
+    "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+    "Pragma": "no-cache",
+    "Expires": "0",
+}
+
+
+class NoCacheStaticFiles(StaticFiles):
+    async def get_response(self, path, scope):
+        resp = await super().get_response(path, scope)
+        for k, v in NO_CACHE_HEADERS.items():
+            resp.headers[k] = v
+        return resp
+
+
+app.mount("/static", NoCacheStaticFiles(directory=STATIC_DIR), name="static")
 
 
 @app.get("/")
 async def index():
-    return FileResponse(STATIC_DIR / "index.html")
+    return FileResponse(STATIC_DIR / "index.html", headers=NO_CACHE_HEADERS)
 
 @app.get("/api/state")
 async def api_state():

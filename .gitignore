@@ -8,6 +8,10 @@ __pycache__/
 # Local scraper output (may contain transcript fragments)
 debug-logs/
 
+# Server runtime logs
+server.log
+server.err
+
 # Editor / OS
 .vscode/
 .idea/
