@@ -8,6 +8,7 @@ import asyncio
 import json
 import os
 import re
+import subprocess
 import time
 from collections import deque
 from contextlib import asynccontextmanager
@@ -224,6 +225,56 @@ class TranscriptCache:
 cache = TranscriptCache()
 
 
+# ---------- "is a Claude shell open?" detector ----------
+
+# Cache the tasklist result so refresh()-on-every-JSONL-write doesn't shell
+# out hundreds of times per second. 2s is plenty fresh for "did the user
+# just /exit".
+_PROC_TTL_SEC = 2.0
+_proc_count_cache: dict = {"n": -1, "at": 0.0}
+# CREATE_NO_WINDOW — suppress the brief console flash when spawning tasklist.
+_CREATE_NO_WINDOW = 0x08000000
+
+
+def _count_claude_exe() -> int:
+    """Number of running claude.exe processes (any user). Returns -1 if
+    enumeration failed — callers should treat -1 as 'unknown, assume alive'
+    so a flaky tasklist doesn't wipe the dashboard."""
+    now = time.time()
+    if now - _proc_count_cache["at"] < _PROC_TTL_SEC:
+        return _proc_count_cache["n"]
+    try:
+        result = subprocess.run(
+            ["tasklist", "/NH", "/FO", "CSV", "/FI", "IMAGENAME eq claude.exe"],
+            capture_output=True, text=True, timeout=3,
+            creationflags=_CREATE_NO_WINDOW,
+        )
+        out = result.stdout or ""
+        if "claude.exe" not in out.lower():
+            n = 0
+        else:
+            n = sum(1 for line in out.splitlines()
+                    if line.lower().startswith('"claude.exe"'))
+    except Exception:
+        n = -1
+    _proc_count_cache["n"] = n
+    _proc_count_cache["at"] = now
+    return n
+
+
+def claude_shells_open() -> int:
+    """User-opened claude.exe shells. The scraper spawns its own short-lived
+    claude.exe every ~90s, so we subtract one while it's in flight. Returns
+    -1 if we couldn't enumerate (caller should fall back to legacy behavior
+    and assume the shells exist)."""
+    n = _count_claude_exe()
+    if n < 0:
+        return -1
+    if scrape_state.in_flight:
+        n = max(0, n - 1)
+    return n
+
+
 # ---------- /usage scraper (the real data source) ----------
 
 SCRAPE_INTERVAL_SEC = float(os.environ.get("CLAUDE_MONITOR_SCRAPE_INTERVAL", "90"))
@@ -425,6 +476,7 @@ class State:
         self.clients: set[WebSocket] = set()
         self.lock = asyncio.Lock()
         self.pinned_session_id: str | None = None
+        self.grass_required: bool = False
 
     def _current_entry(self) -> dict | None:
         if self.pinned_session_id:
@@ -432,6 +484,10 @@ class State:
             if entry:
                 return entry
             # pinned session disappeared; fall through to auto-follow
+        # No open shells → no current session (dashboard clears). We don't
+        # gate on mtime so a long-thinking shell still counts as active.
+        if claude_shells_open() == 0:
+            return None
         return cache.latest_session()
 
     async def refresh(self) -> bool:
@@ -439,8 +495,10 @@ class State:
         current = self._current_entry()
         sess = session_snapshot(current) if current else {}
 
-        # Build "other live sessions" list, excluding current
-        live = cache.live_sessions(LIVE_WINDOW_SEC)
+        # Build "other live sessions" list, excluding current. If no shells
+        # are open at all, skip — otherwise we'd keep showing the last few
+        # transcripts in the sidebar for 30 min after every shell is closed.
+        live = [] if claude_shells_open() == 0 else cache.live_sessions(LIVE_WINDOW_SEC)
         current_id = sess.get("session_id")
         others = []
         for e in live:
@@ -467,6 +525,7 @@ class State:
             "other_sessions":    others,
             "pinned":            bool(self.pinned_session_id),
             "pinned_session":    self.pinned_session_id,
+            "grass_required":    self.grass_required,
             "real_usage":        scrape_state.status(),
         }
 
@@ -478,6 +537,7 @@ class State:
                 s.get("messages"),
                 s.get("session_id"),
                 s.get("pinned_session"),
+                s.get("grass_required"),
                 tuple((o["session_id"], o["mtime"]) for o in s.get("other_sessions", [])),
                 ru.get("five_hour_pct"),
                 ru.get("week_all_pct"),
@@ -502,6 +562,12 @@ class State:
         if session_id == "":
             session_id = None
         self.pinned_session_id = session_id
+        async with self.lock:
+            await self.refresh()
+        await self.broadcast()
+
+    async def set_grass_required(self, required: bool) -> None:
+        self.grass_required = bool(required)
         async with self.lock:
             await self.refresh()
         await self.broadcast()
@@ -675,6 +741,18 @@ async def api_focus(session_id: str = ""):
     """Convenience HTTP endpoint to pin or clear (empty string)."""
     await state.set_pin(session_id or None)
     return {"pinned": state.pinned_session_id}
+
+
+@app.post("/api/grass/require")
+async def api_grass_require():
+    await state.set_grass_required(True)
+    return {"grass_required": True}
+
+
+@app.post("/api/grass/dismiss")
+async def api_grass_dismiss():
+    await state.set_grass_required(False)
+    return {"grass_required": False}
 
 
 if __name__ == "__main__":

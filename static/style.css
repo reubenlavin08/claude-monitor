@@ -283,3 +283,76 @@ html, body {
   background: repeating-linear-gradient(0deg, rgba(51,255,102,0.05) 0 1px, transparent 1px 3px);
   pointer-events: none;
 }
+
+/* ------- TOUCH GRASS lockout overlay ------- */
+.grass-gate {
+  position: fixed;
+  inset: 0;
+  z-index: 999;
+  background: rgba(0, 0, 0, 0.97);
+  color: var(--fg);
+  font-family: 'VT323', 'IBM Plex Mono', monospace;
+  display: grid;
+  place-items: center;
+  text-align: center;
+  letter-spacing: 0.02em;
+  border: 8px solid var(--bad);
+  animation: grass-border-pulse 0.9s steps(2, end) infinite;
+  cursor: none;
+  overflow: hidden;
+}
+.grass-gate[hidden] { display: none; }
+.grass-gate::before {
+  content: ""; position: absolute; inset: 0;
+  background: repeating-linear-gradient(0deg, rgba(255,68,85,0.05) 0 1px, transparent 1px 3px);
+  pointer-events: none;
+}
+.grass-gate-inner { position: relative; padding: 0 32px; }
+.grass-gate-eyebrow {
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 22px;
+  color: var(--bad);
+  text-transform: uppercase;
+  letter-spacing: 0.22em;
+  margin-bottom: 8px;
+  animation: blink 1.1s steps(2, end) infinite;
+}
+.grass-gate-headline {
+  font-size: 180px;
+  font-weight: 800;
+  line-height: 0.9;
+  color: var(--fg-hi);
+  letter-spacing: -0.05em;
+  text-shadow: 0 0 18px rgba(51,255,102,0.35);
+}
+.grass-gate-sub {
+  font-size: 56px;
+  color: var(--fg);
+  line-height: 1;
+  margin-top: 6px;
+}
+.grass-gate-meta {
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 18px;
+  color: var(--fg-dim);
+  margin-top: 28px;
+  letter-spacing: 0.05em;
+}
+.grass-gate-meta-hi { color: var(--fg-hi); }
+.grass-gate-hint {
+  position: absolute;
+  bottom: 22px; left: 0; right: 0;
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 14px;
+  color: var(--fg-faint);
+  letter-spacing: 0.06em;
+}
+@keyframes grass-border-pulse { 50% { border-color: transparent; } }
+
+/* Pi 800x480 — shrink the headline so it fits */
+@media (max-width: 900px), (max-height: 540px) {
+  .grass-gate-headline { font-size: 120px; }
+  .grass-gate-sub      { font-size: 40px; }
+  .grass-gate-eyebrow  { font-size: 18px; }
+  .grass-gate-meta     { font-size: 15px; margin-top: 18px; }
+}

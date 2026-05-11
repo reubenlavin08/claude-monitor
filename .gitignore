@@ -11,6 +11,23 @@ debug-logs/
 # Server runtime logs
 server.log
 server.err
+voice-*.log
+voice-*.err
+
+# Local secrets (MiniMax key, etc.)
+.env
+
+# Per-install voice-assistant persona (kept private; default ships in code)
+voice-personality.txt
+
+# Dev / scratch scripts (not part of the deliverable)
+test-*.py
+diagnose-*.py
+dump-*.py
+compare-*.py
+smoke-*.py
+say-*.py
+full-system-test.py
 
 # Editor / OS
 .vscode/

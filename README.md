@@ -158,6 +158,123 @@ and see which one is closest to its context window is genuinely useful.
 
 ---
 
+## Touch Grass mode
+
+The dashboard supports a hard-lockout state when the 5-hour window crosses
+crit. The screen takes over with `TOUCH GRASS / to continue`, the existing
+crit voice fires, the Pi buzzer keeps going — and the dashboard refuses to
+clear until you physically show real grass to a USB webcam pointed at your
+desk.
+
+```
+┌─ server.py :8765 ──────┐    ┌─ cam.py :8767 ─────────────┐
+│  State.grass_required  │    │  OpenCV capture loop       │
+│  POST /api/grass/      │    │  MJPEG stream + /api/stats │
+│       require | dismiss│    │  /snapshot.jpg             │
+│  WS broadcasts the flag│    └────────────┬───────────────┘
+│  Frontend renders the  │                 │
+│  full-screen takeover  │                 ▼
+└────────────▲───────────┘    ┌─ grass_detector.py ────────┐
+             │                │  SigLIP 2 zero-shot CLF    │
+             │                │  fp16 on GTX 1650 CUDA     │
+             └────POST /api/──┤  confidence = softmax mass │
+                  grass/      │  on positive caption bank  │
+                  dismiss     │  (real grass blades …) vs  │
+                              │  negatives (green plastic, │
+                              │  paper, fake plant, …)     │
+                              └────────────────────────────┘
+```
+
+[`grass_detector.py`](grass_detector.py) loads `google/siglip2-base-patch16-256`
+(Apache 2.0, ~400 MB) once and pre-computes the text embeddings, so each
+frame is just an image-encode + a single matmul against the caption bank.
+GTX 1650 runs at ~50 ms/frame in fp16 → comfortably 5 Hz of scoring while
+the cam itself streams the preview at 30 fps.
+
+SigLIP 2 over YOLO because the task is open-vocabulary classification
+(_"is this real grass?"_), not detection — YOLO would need a labeled
+grass dataset and a finetune to answer that, while SigLIP just needs a
+list of captions. The negative caption bank is the cheat-resistance:
+green pens and Post-Its score high on "greenness" but lose probability
+mass to `"a green plastic object"` and `"a green piece of paper"`, so the
+detector consistently rejects them.
+
+---
+
+## Voice assistant ("hey grassy")
+
+There's a wake-word voice assistant that lives alongside the dashboard. Say
+**"hey grassy"** and ask it anything — usage status, advice, or just for
+an insult. It also proactively yells at you as your token budget melts.
+
+```
+┌─ laptop mic ──────────────────────────────────────────────┐
+│                                                           │
+│  sounddevice 16kHz mono                                   │
+│      │                                                    │
+│      ▼ 30ms frames                                        │
+│  webrtcvad — speech vs silence                            │
+│      │                                                    │
+│      ▼ utterance bounded by 600ms silence                 │
+│  faster-whisper tiny.en on CUDA (GTX 1650, ~250 ms)       │
+│      │                                                    │
+│      ▼ "hey grassy ..." regex (permissive, many variants) │
+│  MiniMax-Text-01 LLM ── live dashboard context injected   │
+│      │                                                    │
+│      ▼ ≤14-word reply                                     │
+│  edge-tts (free MS neural TTS, voice via $EDGE_VOICE)     │
+│      │                                                    │
+│      ▼ MP3 → pygame.mixer in-process playback             │
+│  laptop speakers                                          │
+└───────────────────────────────────────────────────────────┘
+```
+
+**Why local-Whisper + cloud-LLM + cloud-TTS:** Whisper on the 1650 hits
+~250ms which is faster than any cloud STT round-trip; LLMs and TTS are
+each one HTTPS call where the network cost is dominated by the
+generation latency anyway, so keeping them remote costs nothing.
+
+Total round-trip ≈ 2-3 seconds from "you stop talking" to "voice replies."
+
+### Live state dashboard
+
+A second small dashboard runs on `:8766` showing what the assistant is
+hearing in real time: status (idle / recording / processing / speaking),
+last heard / last command / last reply, and a rolling history of every
+transcribed utterance, command extracted, and reply spoken. Useful for
+debugging when the wake-word didn't trigger or when the LLM said
+something unexpected.
+
+### Escalating milestone reminders
+
+The voice daemon polls the main `/api/state` every 30 seconds. Crossing
+each five-hour threshold fires a proactive, progressively meaner one-shot
+reminder. Each milestone fires exactly once per five-hour window — once
+the window resets (pct drops sharply), all milestones re-arm.
+
+| Crossing | Effect |
+|---|---|
+| 50% | POST `/api/grass/require` — engages the Touch Grass takeover |
+| 60% | mild verbal warning |
+| 70% | stronger reprimand |
+| 80% | harsh criticism |
+| 90% | savage condemnation |
+| 95% | maximum hostility |
+
+The 50% threshold means Touch Grass mode engages **earlier** than crit
+— you get nudged outside while you still have headroom, instead of after
+you've already burned the budget.
+
+### Personality
+
+The LLM runs with a system prompt that gives it a specific character —
+think disappointed grandfather rather than chipper assistant. The voice
+chosen via `$EDGE_VOICE` complements the persona; any of Microsoft's
+neural voices works, default is configurable. The personality vocabulary
+is in `voice-wakeword.py` and easy to swap if you want a different vibe.
+
+---
+
 ## Setup
 
 Two-machine install — full instructions in

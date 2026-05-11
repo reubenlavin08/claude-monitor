@@ -23,10 +23,14 @@ const els = {
   msgs:         $("msgs"),
   scrapeOk:     $("scrape-ok"),
   updated:      $("updated"),
+  grassGate:    $("grass-gate"),
 };
 
 let lastSnapshot = null;
 let lastMtime = 0;
+// Local-only dismiss: hides overlay in this tab without clearing server state.
+// Resets when the server eventually flips grass_required back to false.
+let grassDismissedLocally = false;
 let resetEpoch = null;       // recomputed when we receive a new five_hour_reset string
 let resetSource = "";        // the string the epoch came from (so we don't reparse needlessly)
 
@@ -161,14 +165,20 @@ function renderCountdown() {
   els.cdUnit.textContent = unit;
 }
 
-function setBatteryPct(pct) {
+function setBatteryPct(pct, isNoData) {
+  els.ctxFill.classList.remove("warn", "bad");
+  els.ctxNum.classList.remove("warn", "bad", "nodata");
+  if (isNoData) {
+    els.ctxFill.style.width = "0%";
+    els.ctxNum.firstChild.nodeValue = "—";
+    els.ctxNum.classList.add("nodata");
+    return;
+  }
   pct = Math.max(0, Math.min(100, Number(pct) || 0));
   els.ctxFill.style.width = pct.toFixed(1) + "%";
-  els.ctxFill.classList.remove("warn", "bad");
   const cls = classForPct(pct);
   if (cls) els.ctxFill.classList.add(cls);
   els.ctxNum.firstChild.nodeValue = String(Math.round(pct));
-  els.ctxNum.classList.remove("warn", "bad");
   if (cls) els.ctxNum.classList.add(cls);
 }
 
@@ -198,10 +208,15 @@ function applySnapshot(s) {
   lastSnapshot = s;
 
   // header
+  const hasSession = !!s.session_id;
   els.model.textContent = (s.model_name || "—").toLowerCase();
-  const cwd   = s.cwd_leaf || s.project || "—";
-  const title = s.title || "(no prompts yet)";
-  els.project.textContent = `${cwd} · "${title}"`;
+  if (hasSession) {
+    const cwd   = s.cwd_leaf || s.project || "—";
+    const title = s.title || "(no prompts yet)";
+    els.project.textContent = `${cwd} · "${title}"`;
+  } else {
+    els.project.textContent = "no active session";
+  }
 
   if (s.pinned) {
     els.mode.textContent = "pinned";
@@ -239,10 +254,15 @@ function applySnapshot(s) {
   }
 
   // context battery
-  const maxC = s.max_context || 200_000;
-  const ctxPct = maxC > 0 ? (s.context_tokens || 0) / maxC * 100 : 0;
-  setBatteryPct(ctxPct);
-  els.ctxTok.textContent = `${fmtTokens(s.context_tokens || 0)} / ${fmtTokens(maxC)} tok`;
+  if (hasSession) {
+    const maxC = s.max_context || 200_000;
+    const ctxPct = maxC > 0 ? (s.context_tokens || 0) / maxC * 100 : 0;
+    setBatteryPct(ctxPct, false);
+    els.ctxTok.textContent = `${fmtTokens(s.context_tokens || 0)} / ${fmtTokens(maxC)} tok`;
+  } else {
+    setBatteryPct(0, true);
+    els.ctxTok.textContent = "— / —";
+  }
 
   // sessions sidebar
   renderSessions(s.other_sessions || []);
@@ -256,6 +276,11 @@ function applySnapshot(s) {
 
   // countdown immediately (re-render the cell with the parsed value)
   renderCountdown();
+
+  // touch-grass lockout overlay
+  if (!s.grass_required) grassDismissedLocally = false;
+  const grassActive = !!s.grass_required && !grassDismissedLocally;
+  if (els.grassGate) els.grassGate.hidden = !grassActive;
 }
 
 function renderSessions(list) {
@@ -298,6 +323,15 @@ function unpin() {
 }
 els.mode.addEventListener("click", () => {
   if (lastSnapshot && lastSnapshot.pinned) unpin();
+});
+
+// Local dismiss for the touch-grass overlay (testing only — does not clear
+// the server flag, so other tabs / the Pi keep showing the lockout).
+window.addEventListener("keydown", (e) => {
+  if ((e.key === "g" || e.key === "G") && els.grassGate && !els.grassGate.hidden) {
+    grassDismissedLocally = true;
+    els.grassGate.hidden = true;
+  }
 });
 
 // ---------- per-second ticker ----------
