@@ -501,14 +501,22 @@ def speak_sapi(text: str, rate: int = 2) -> None:
     )
 
 
+# Single global lock — guarantees only one TTS plays at a time even when the
+# mic handler, /api/speak, and milestone watcher all fire simultaneously.
+# pygame.mixer.music is a single channel, so without this two concurrent
+# speak() calls overlap and you hear both voices at once.
+_speak_lock = threading.Lock()
+
+
 def speak(text: str) -> None:
     # edge-tts (Chinese voice on English) is the primary path now.
     # Falls back to MiniMax then SAPI if Edge is unreachable.
-    if speak_edge(text):
-        return
-    if speak_minimax(text):
-        return
-    speak_sapi(text)
+    with _speak_lock:
+        if speak_edge(text):
+            return
+        if speak_minimax(text):
+            return
+        speak_sapi(text)
 
 
 # ---- Milestone watcher: escalating proactive insults + grass-gate trigger ----
