@@ -297,7 +297,8 @@ function applySnapshot(s) {
 
 // ---------- embedded cam feed + live confidence on the lockout overlay ----------
 
-let grassCamPoll = null;
+let grassCamFramePoll = null;   // 8fps snapshot loop driving the <img>
+let grassCamStatsPoll = null;   // slower poll for confidence/sustained/etc.
 
 function camBaseUrl() {
   // Use whatever host the dashboard was loaded from so it works from the Pi
@@ -307,23 +308,24 @@ function camBaseUrl() {
 
 function startGrassCam() {
   if (!els.grassStream) return;
-  // Chromium can hold onto a stale MJPEG socket across src reassignments,
-  // so first remove the attribute entirely; on the next tick set a fresh
-  // URL with a cache-buster. This is what makes the embed work on the
-  // 2nd+ lockout cycle, not just the first.
-  els.grassStream.removeAttribute("src");
-  setTimeout(() => {
-    if (els.grassGate && !els.grassGate.hidden) {
-      els.grassStream.src = `${camBaseUrl()}/stream?cb=${Date.now()}`;
-    }
-  }, 80);
-  if (grassCamPoll) clearInterval(grassCamPoll);
+  stopGrassCam();   // ensure clean state regardless of where we came from
+  // Snapshot polling. We deliberately do NOT use the MJPEG /stream endpoint
+  // here — Chromium's MJPEG renderer is flaky across cycles (the socket
+  // sometimes wedges after the first lockout). Polling /snapshot.jpg gives
+  // an independent HTTP GET per frame; if one fails the next still works.
+  const refreshFrame = () => {
+    if (!els.grassGate || els.grassGate.hidden) return;
+    els.grassStream.src = `${camBaseUrl()}/snapshot.jpg?t=${Date.now()}`;
+  };
+  refreshFrame();
+  grassCamFramePoll = setInterval(refreshFrame, 120);   // ~8 fps
   pollGrassCam();
-  grassCamPoll = setInterval(pollGrassCam, 400);
+  grassCamStatsPoll = setInterval(pollGrassCam, 400);
 }
 
 function stopGrassCam() {
-  if (grassCamPoll) { clearInterval(grassCamPoll); grassCamPoll = null; }
+  if (grassCamFramePoll) { clearInterval(grassCamFramePoll); grassCamFramePoll = null; }
+  if (grassCamStatsPoll) { clearInterval(grassCamStatsPoll); grassCamStatsPoll = null; }
   if (els.grassStream) els.grassStream.removeAttribute("src");
   if (els.grassConf)   els.grassConf.textContent = "—";
   if (els.grassBar)    els.grassBar.style.width = "0%";
