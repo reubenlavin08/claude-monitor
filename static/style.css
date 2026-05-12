@@ -383,8 +383,8 @@ html, body {
 }
 .grass-gate-cam-frame img {
   display: block;
-  width: 520px;
-  height: 390px;
+  width: 760px;
+  height: 570px;
   object-fit: contain;
   background: #000;
 }

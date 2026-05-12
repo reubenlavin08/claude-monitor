@@ -644,7 +644,7 @@ class _Handler(http.server.BaseHTTPRequestHandler):
                 server = dict(_server_state)
             payload = {**_stats, "detect": det, "server": server}
             self._send(200, json.dumps(payload).encode(), "application/json")
-        elif self.path == "/snapshot.jpg":
+        elif self.path.startswith("/snapshot.jpg"):
             with _frame_lock:
                 jpg = _latest_jpeg
             if jpg is None:
