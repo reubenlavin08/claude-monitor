@@ -364,10 +364,29 @@ else:
     SYSTEM_PROMPT = _DEFAULT_SYSTEM_PROMPT
 
 
+# Rolling memory of recent replies — fed back to the LLM so it doesn't
+# repeat itself across calls. Pure variety mechanism, no other purpose.
+from collections import deque as _deque
+_recent_replies: _deque = _deque(maxlen=6)
+
+
 def ask_llm(user_text: str) -> str:
     if not API_KEY:
         return "your minimax key isn't set up yet."
     ctx = get_dashboard_context()
+    extra = ""
+    if _recent_replies:
+        extra += "\n\nThings YOU just said (in your last few replies). Do NOT "
+        extra += "repeat any of these phrasings or vocab — vary completely:\n"
+        for r in _recent_replies:
+            extra += f"  - {r}\n"
+    accuracy = (
+        "\n\nACCURACY RULE: If you mention any percentage or number, use ONLY "
+        "the exact figure(s) from the live dashboard context above. Never "
+        "invent or round to a different number. If you cannot state the "
+        "accurate number, do not state any number at all."
+    )
+    sys_msg = SYSTEM_PROMPT + "\n\nLive dashboard:\n" + ctx + extra + accuracy
     try:
         r = requests.post(
             f"{API_BASE}/v1/text/chatcompletion_v2",
@@ -375,11 +394,11 @@ def ask_llm(user_text: str) -> str:
             json={
                 "model": MODEL,
                 "messages": [
-                    {"role": "system", "content": SYSTEM_PROMPT + "\n\nLive dashboard:\n" + ctx},
+                    {"role": "system", "content": sys_msg},
                     {"role": "user",   "content": user_text},
                 ],
                 "max_tokens": 80,
-                "temperature": 0.8,
+                "temperature": 0.9,   # slightly higher = more variety
             },
             timeout=15,
         )
@@ -389,10 +408,14 @@ def ask_llm(user_text: str) -> str:
             return f"api error: {base.get('status_msg', 'unknown')}"
         if "choices" in data and data["choices"]:
             choice = data["choices"][0]
+            text = ""
             if "message" in choice:
-                return choice["message"].get("content", "").strip()
-            if "messages" in choice and choice["messages"]:
-                return choice["messages"][0].get("text", "").strip()
+                text = choice["message"].get("content", "").strip()
+            elif "messages" in choice and choice["messages"]:
+                text = choice["messages"][0].get("text", "").strip()
+            if text:
+                _recent_replies.append(text)
+                return text
         return f"unexpected response shape: {list(data.keys())}"
     except Exception as e:
         return f"oops: {e}"
@@ -559,11 +582,14 @@ def _milestone_watcher_thread():
                 _crossed_milestones.add(m)
 
         tier = ESCALATION_TIERS[highest]
+        actual = int(round(pct))
         prompt = (
-            f"The user just crossed {int(highest)}% of their five-hour Claude "
-            f"token budget. Reply in this tone: '{tier}'. State the percent "
-            f"number. Stay under 14 words. No greetings, no questions — just "
-            f"one short spoken line."
+            f"User just crossed the {int(highest)}% milestone on their "
+            f"five-hour Claude token budget. ACTUAL current usage right now: "
+            f"{actual}%. Reply in this tone: '{tier}'. If you state a "
+            f"percent, use exactly {actual} (the current actual figure). "
+            f"Never invent a different number. Stay under 14 words. No "
+            f"greetings, no questions — one short spoken line."
         )
         try:
             text = ask_llm(prompt)
