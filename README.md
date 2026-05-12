@@ -166,6 +166,11 @@ crit voice fires, the Pi buzzer keeps going — and the dashboard refuses to
 clear until you physically show real grass to a USB webcam pointed at your
 desk.
 
+<p align="center">
+  <img src="docs/touch-grass/lockout-phone.jpg" alt="Lockout screen on the phone showing the live cam embed" width="38%">
+  <img src="docs/touch-grass/detector-view.jpg" alt="SigLIP 2 grass detector confidence" width="58%">
+</p>
+
 ```
 ┌─ server.py :8765 ──────┐    ┌─ cam.py :8767 ─────────────┐
 │  State.grass_required  │    │  OpenCV capture loop       │
