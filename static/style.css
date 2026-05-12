@@ -383,9 +383,9 @@ html, body {
 }
 .grass-gate-cam-frame img {
   display: block;
-  width: 760px;
-  height: 570px;
-  object-fit: contain;
+  height: 78vh;
+  width: auto;        /* let aspect ratio determine width — frame hugs the image */
+  max-width: 100%;
   background: #000;
 }
 .grass-gate-cam-frame::after {
@@ -437,6 +437,6 @@ html, body {
   .grass-gate-eyebrow  { font-size: 14px; }
   .grass-gate-instr    { font-size: 12px; margin-top: 10px; padding-left: 18px; }
   .grass-gate-main     { gap: 16px; margin-top: 4px; }
-  .grass-gate-cam-frame img { width: 340px; height: 255px; }
+  .grass-gate-cam-frame img { height: 62vh; width: auto; }
   .grass-gate-conf-num { font-size: 22px; min-width: 52px; }
 }
