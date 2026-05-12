@@ -167,7 +167,8 @@ clear until you physically show real grass to a USB webcam pointed at your
 desk.
 
 <p align="center">
-  <img src="docs/touch-grass/touch-grass-demo.gif" alt="Live test: lockout fires, phone cam embeds in the overlay, SigLIP 2 detects grass, screen clears" width="68%">
+  <img src="docs/touch-grass/touch-grass-demo.gif" alt="iPhone view: lockout, embedded cam, real grass clears it" height="320">
+  <img src="docs/touch-grass/screen-recording.gif" alt="Desktop screen recording of the same test" height="320">
 </p>
 
 <p align="center">
