@@ -209,6 +209,92 @@ green pens and Post-Its score high on "greenness" but lose probability
 mass to `"a green plastic object"` and `"a green piece of paper"`, so the
 detector consistently rejects them.
 
+### Computer vision — zero-shot grass classification
+
+The detector ([`grass_detector.py`](grass_detector.py)) is a single class
+wrapping `Siglip2Model` from `transformers`. Two encoders mapping into a
+shared 768-D space:
+
+```python
+positives = [
+    "a close-up photo of real grass blades",
+    "fresh green grass outdoors in sunlight",
+    "a hand holding a clump of grass",
+    "a tuft of green plant leaves",
+]
+negatives = [
+    "a green plastic object", "a green piece of paper",
+    "a green pen or marker", "a green fabric or shirt",
+    "a green plush toy",     "a fake plastic plant",
+    "a person sitting indoors at a desk", "an empty room",
+    "a computer keyboard",   "a screen displaying text",
+]
+# Per frame: image → ViT → vec; cosine vs all caption vecs;
+# softmax across captions; confidence = mass on positives
+```
+
+Confidence ≥ **0.85** sustained for ≥ **1.5 s** clears the lockout —
+short enough to be quick when you're actually outside, long enough to
+reject a flicker of green from your screen background. Frames come from
+[`cam.py`](cam.py)'s shared `_latest_bgr` buffer (no JPEG round-trip into
+the detector thread). Inference runs on CUDA fp16 — ~530 ms/frame on the
+GTX 1650, ~9× faster on cards with full Tensor Cores.
+
+### LLM — Grassy persona via MiniMax-Text-01
+
+Every spoken line goes through one MiniMax chat completion. The system
+prompt is `voice-personality.txt` verbatim (gitignored, per-machine), so
+the persona stays consistent whether the trigger is the mic ("hey grassy
+…"), the milestone watcher (auto-fires at 10/20/30/…/100% crossings), or
+[`grass_voice.py`](grass_voice.py) (nags every 20 s while locked).
+
+The dashboard's live state is concatenated onto the system prompt so
+Grassy can quote your real numbers:
+
+```
+You are "Grassy" — the voice of a grumpy old Chinese uncle ...
+Live dashboard:
+  5-hour usage: 52%
+  weekly usage: 18%
+  model: Opus 4.7
+  session cost: $1.24
+```
+
+A rolling deque of the last six replies is injected as a "do not repeat
+these phrasings" instruction, so successive nags vary instead of looping
+through the same insults.
+
+### TTS — Chinese voice on English text via edge-tts
+
+Free Microsoft Edge TTS, voice `zh-CN-YunjianNeural` — a Mandarin voice
+reading English text. The phonetic mismatch produces an authentic
+Chinese-accented delivery, which is the punchline of the persona ("stupid
+egg", "tortoise grandson", etc. read by a Mandarin voice). Playback is
+in-process via `pygame.mixer.music` from a unique temp MP3 per call. A
+single `threading.Lock` around `speak()` serializes the three concurrent
+callers (mic / milestone watcher / `/api/speak`) so two voices never
+overlap on the same channel.
+
+### How a single Touch Grass cycle plays out
+
+```
+1. server.py scrapes /usage      → five_hour_pct >= 50%
+2. server.py.refresh()           → grass_required = True (rising edge)
+3. WS broadcast                  → all dashboards render TOUCH GRASS overlay
+4. voice-wakeword.py milestone   → POST /api/grass/require (idempotent backup)
+                                 → ask_llm() + speak()  — first nag
+5. grass_voice.py polls          → sees rising edge; POST /api/speak
+                                 → ENTER_PROMPT through Grassy persona
+6. user opens IP Camera on phone → cam.py auto-reconnects to MJPEG URL
+7. user goes outside             → frames flow through cam.py into detector
+8. SigLIP 2 confidence ≥ 0.85    → sustained timer ticks up to 1.5 s
+9. cam.py POSTs /api/grass/      → grass_required = False (falling edge)
+       dismiss
+10. WS broadcast                 → overlays clear on every screen
+11. grass_voice.py sees clear    → POST /api/speak with CONGRATS_PROMPT
+                                 → Grassy: "fine, you went outside ..."
+```
+
 ---
 
 ## Voice assistant ("hey grassy")
