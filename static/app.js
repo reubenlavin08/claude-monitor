@@ -307,7 +307,16 @@ function camBaseUrl() {
 
 function startGrassCam() {
   if (!els.grassStream) return;
-  els.grassStream.src = `${camBaseUrl()}/stream?cb=${Date.now()}`;
+  // Chromium can hold onto a stale MJPEG socket across src reassignments,
+  // so first remove the attribute entirely; on the next tick set a fresh
+  // URL with a cache-buster. This is what makes the embed work on the
+  // 2nd+ lockout cycle, not just the first.
+  els.grassStream.removeAttribute("src");
+  setTimeout(() => {
+    if (els.grassGate && !els.grassGate.hidden) {
+      els.grassStream.src = `${camBaseUrl()}/stream?cb=${Date.now()}`;
+    }
+  }, 80);
   if (grassCamPoll) clearInterval(grassCamPoll);
   pollGrassCam();
   grassCamPoll = setInterval(pollGrassCam, 400);
@@ -315,7 +324,7 @@ function startGrassCam() {
 
 function stopGrassCam() {
   if (grassCamPoll) { clearInterval(grassCamPoll); grassCamPoll = null; }
-  if (els.grassStream) els.grassStream.src = "";   // tear down the MJPEG socket
+  if (els.grassStream) els.grassStream.removeAttribute("src");
   if (els.grassConf)   els.grassConf.textContent = "—";
   if (els.grassBar)    els.grassBar.style.width = "0%";
   if (els.grassStatus) { els.grassStatus.textContent = "—"; els.grassStatus.classList.remove("hit"); }
