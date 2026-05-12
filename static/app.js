@@ -24,13 +24,19 @@ const els = {
   scrapeOk:     $("scrape-ok"),
   updated:      $("updated"),
   grassGate:    $("grass-gate"),
+  grassStream:  $("grass-gate-stream"),
+  grassConf:    $("grass-gate-conf"),
+  grassBar:     $("grass-gate-bar"),
+  grassStatus:  $("grass-gate-status"),
 };
 
 let lastSnapshot = null;
 let lastMtime = 0;
 // Local-only dismiss: hides overlay in this tab without clearing server state.
-// Resets when the server eventually flips grass_required back to false.
-let grassDismissedLocally = false;
+// Auto-expires after LOCAL_DISMISS_MS so a stray G press doesn't permanently
+// suppress the lockout. Also resets when server flips grass_required to false.
+const LOCAL_DISMISS_MS = 30_000;
+let grassDismissedUntil = 0;
 let resetEpoch = null;       // recomputed when we receive a new five_hour_reset string
 let resetSource = "";        // the string the epoch came from (so we don't reparse needlessly)
 
@@ -278,9 +284,69 @@ function applySnapshot(s) {
   renderCountdown();
 
   // touch-grass lockout overlay
-  if (!s.grass_required) grassDismissedLocally = false;
-  const grassActive = !!s.grass_required && !grassDismissedLocally;
-  if (els.grassGate) els.grassGate.hidden = !grassActive;
+  if (!s.grass_required) grassDismissedUntil = 0;
+  const stillDismissed = Date.now() < grassDismissedUntil;
+  const grassActive = !!s.grass_required && !stillDismissed;
+  if (els.grassGate) {
+    const was = !els.grassGate.hidden;
+    els.grassGate.hidden = !grassActive;
+    if (grassActive && !was) startGrassCam();
+    if (!grassActive && was) stopGrassCam();
+  }
+}
+
+// ---------- embedded cam feed + live confidence on the lockout overlay ----------
+
+let grassCamPoll = null;
+
+function camBaseUrl() {
+  // Use whatever host the dashboard was loaded from so it works from the Pi
+  // (192.168.1.x) as well as localhost — the cam runs on the same machine.
+  return `${location.protocol}//${location.hostname}:8767`;
+}
+
+function startGrassCam() {
+  if (!els.grassStream) return;
+  els.grassStream.src = `${camBaseUrl()}/stream?cb=${Date.now()}`;
+  if (grassCamPoll) clearInterval(grassCamPoll);
+  pollGrassCam();
+  grassCamPoll = setInterval(pollGrassCam, 400);
+}
+
+function stopGrassCam() {
+  if (grassCamPoll) { clearInterval(grassCamPoll); grassCamPoll = null; }
+  if (els.grassStream) els.grassStream.src = "";   // tear down the MJPEG socket
+  if (els.grassConf)   els.grassConf.textContent = "—";
+  if (els.grassBar)    els.grassBar.style.width = "0%";
+  if (els.grassStatus) { els.grassStatus.textContent = "—"; els.grassStatus.classList.remove("hit"); }
+}
+
+async function pollGrassCam() {
+  try {
+    const r = await fetch(`${camBaseUrl()}/api/stats`, { cache: "no-store" });
+    const s = await r.json();
+    const d = s.detect || {};
+    const c = d.confidence;
+    const thr = d.threshold || 0.85;
+    const hit = (c != null) && c >= thr;
+    if (els.grassConf) {
+      els.grassConf.textContent = (c == null) ? "—" : c.toFixed(3);
+      els.grassConf.classList.toggle("hit", hit);
+    }
+    if (els.grassBar) {
+      els.grassBar.style.width = (Math.max(0, Math.min(1, c || 0)) * 100).toFixed(1) + "%";
+      els.grassBar.classList.toggle("hit", hit);
+    }
+    if (els.grassStatus) {
+      const sustained = (d.sustained_sec || 0).toFixed(1);
+      const target    = (d.sustain_target || 1.5).toFixed(1);
+      const stat      = (d.status || "—").toUpperCase();
+      els.grassStatus.textContent = `${stat} · ${sustained} / ${target}s`;
+      els.grassStatus.classList.toggle("hit", stat === "GRASS");
+    }
+  } catch (e) {
+    if (els.grassStatus) els.grassStatus.textContent = "cam offline";
+  }
 }
 
 function renderSessions(list) {
@@ -325,11 +391,21 @@ els.mode.addEventListener("click", () => {
   if (lastSnapshot && lastSnapshot.pinned) unpin();
 });
 
-// Local dismiss for the touch-grass overlay (testing only — does not clear
-// the server flag, so other tabs / the Pi keep showing the lockout).
+// Touch-grass dismiss keys:
+//   G              local-only (this tab) — Pi keeps showing the lockout
+//   Shift+G or D   safety key — POST /api/grass/dismiss, clears for everyone
 window.addEventListener("keydown", (e) => {
-  if ((e.key === "g" || e.key === "G") && els.grassGate && !els.grassGate.hidden) {
-    grassDismissedLocally = true;
+  if (!els.grassGate || els.grassGate.hidden) return;
+  if (e.shiftKey && (e.key === "G" || e.key === "g")) {
+    fetch("/api/grass/dismiss", { method: "POST" }).catch(() => {});
+    return;
+  }
+  if (e.key === "d" || e.key === "D") {
+    fetch("/api/grass/dismiss", { method: "POST" }).catch(() => {});
+    return;
+  }
+  if (e.key === "g" || e.key === "G") {
+    grassDismissedUntil = Date.now() + LOCAL_DISMISS_MS;
     els.grassGate.hidden = true;
   }
 });

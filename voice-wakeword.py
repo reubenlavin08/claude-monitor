@@ -251,6 +251,39 @@ class _Handler(http.server.BaseHTTPRequestHandler):
         else:
             self.send_error(404)
 
+    def do_POST(self):
+        # External speak endpoint — every nag from elsewhere in the system
+        # should come through here so the personality file + edge-tts voice
+        # carry over. Body: {"prompt": "user-side LLM instruction"}.
+        if self.path == "/api/speak":
+            length = int(self.headers.get("Content-Length", "0") or "0")
+            try:
+                raw = self.rfile.read(length).decode("utf-8") if length else "{}"
+                body = json_mod.loads(raw or "{}")
+            except Exception as e:
+                self._send(400, json_mod.dumps({"error": f"bad json: {e}"}).encode(), "application/json")
+                return
+            prompt = (body.get("prompt") or "").strip()
+            if not prompt:
+                self._send(400, json_mod.dumps({"error": "prompt required"}).encode(), "application/json")
+                return
+            # Don't trample an in-flight mic conversation.
+            if processing:
+                self._send(429, json_mod.dumps({"error": "busy with mic"}).encode(), "application/json")
+                return
+            try:
+                reply = ask_llm(prompt)
+                _add_transcript(reply, "speak")
+                _update(last_reply=reply, status="speaking")
+                speak(reply)
+                _update(status="idle")
+                self._send(200, json_mod.dumps({"spoken": reply}).encode(), "application/json")
+            except Exception as e:
+                _update(status="idle")
+                self._send(500, json_mod.dumps({"error": str(e)}).encode(), "application/json")
+            return
+        self.send_error(404)
+
 
 def _run_dashboard():
     with socketserver.ThreadingTCPServer(("0.0.0.0", 8766), _Handler) as httpd:
@@ -457,13 +490,20 @@ def speak(text: str) -> None:
 
 # ---- Milestone watcher: escalating proactive insults + grass-gate trigger ----
 
-MILESTONES = [60, 70, 80, 90, 95]
+MILESTONES = [10, 20, 30, 40, 50, 60, 70, 80, 90, 100]
 ESCALATION_TIERS = {
-    60: "mild warning, mild irritation",
-    70: "stronger reprimand, call him a rice bucket",
-    80: "harsh criticism, bring up ancestors briefly",
-    90: "savage condemnation, full uncle rage",
-    95: "maximum hostility, bury him with comparison to garbage",
+    # Tone descriptors only — no specific vocab forced, so the LLM picks
+    # freshly from the personality file's pool every call.
+    10:  "warm, grandfatherly, almost approving — barely a remark",
+    20:  "gentle, like a kindly old man pouring tea — light observation",
+    30:  "light teasing, raised eyebrow, observational not yet annoyed",
+    40:  "mild concern about the trajectory, still patient",
+    50:  "first frown, irritation begins",
+    60:  "scolding, getting annoyed",
+    70:  "stronger reprimand, real disappointment",
+    80:  "harsh criticism, anger rising, invoke ancestors",
+    90:  "savage condemnation, full uncle rage",
+    100: "complete contempt, total disownment",
 }
 GRASS_REQUIRE_PCT = 50.0
 
@@ -503,26 +543,36 @@ def _milestone_watcher_thread():
             except Exception as e:
                 print(f"[grass require failed: {e}]", flush=True)
 
-        # Proactive insult at the next un-crossed milestone (one per cycle)
+        # Find the HIGHEST un-crossed milestone the user has reached. If pct
+        # jumped past several at once (e.g. 0% -> 65% between polls), we fire
+        # only the top tier and mark all the lower ones as already crossed,
+        # so the user gets ONE pointed insult, not a spam of escalating ones.
+        highest = None
         for m in MILESTONES:
             if pct >= m and m not in _crossed_milestones:
+                highest = m
+        if highest is None:
+            continue
+        # Mark every milestone at or below current pct as fired
+        for m in MILESTONES:
+            if pct >= m:
                 _crossed_milestones.add(m)
-                tier = ESCALATION_TIERS[m]
-                prompt = (
-                    f"The user just crossed {int(m)}% of their five-hour Claude "
-                    f"token budget. Bark a single short reminder at escalation "
-                    f"tier '{tier}'. State the percent number. Stay under 14 "
-                    f"words. No questions, no greetings — just the jab."
-                )
-                try:
-                    text = ask_llm(prompt)
-                    _add_transcript(text, "milestone")
-                    _update(last_reply=text, status="speaking")
-                    speak(text)
-                    _update(status="idle")
-                except Exception as e:
-                    print(f"[milestone insult failed: {e}]", flush=True)
-                break
+
+        tier = ESCALATION_TIERS[highest]
+        prompt = (
+            f"The user just crossed {int(highest)}% of their five-hour Claude "
+            f"token budget. Reply in this tone: '{tier}'. State the percent "
+            f"number. Stay under 14 words. No greetings, no questions — just "
+            f"one short spoken line."
+        )
+        try:
+            text = ask_llm(prompt)
+            _add_transcript(text, "milestone")
+            _update(last_reply=text, status="speaking")
+            speak(text)
+            _update(status="idle")
+        except Exception as e:
+            print(f"[milestone insult failed: {e}]", flush=True)
 
 
 threading.Thread(target=_milestone_watcher_thread, daemon=True).start()

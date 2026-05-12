@@ -282,6 +282,10 @@ SCRAPE_INTERVAL_SEC = float(os.environ.get("CLAUDE_MONITOR_SCRAPE_INTERVAL", "90
 # the dashboard without fresh data for 90s.
 SCRAPE_RETRY_SEC = float(os.environ.get("CLAUDE_MONITOR_SCRAPE_RETRY", "15"))
 
+# 5h % at which the Touch Grass lockout auto-arms. Once triggered, it won't
+# fire again until pct drops back below this threshold (one-shot per crossing).
+CRIT_PCT = float(os.environ.get("CLAUDE_MONITOR_CRIT_PCT", "50"))
+
 
 def _format_reset_string(s: str) -> str:
     """Re-insert spaces lost during TUI rendering: '1:30am(America/Tijuana)' -> '1:30am (America/Tijuana)'."""
@@ -477,6 +481,9 @@ class State:
         self.lock = asyncio.Lock()
         self.pinned_session_id: str | None = None
         self.grass_required: bool = False
+        # _grass_armed: ready to fire the lockout when 5h pct crosses CRIT_PCT.
+        # Goes False on each trigger; re-arms only when pct drops back below.
+        self._grass_armed: bool = True
 
     def _current_entry(self) -> dict | None:
         if self.pinned_session_id:
@@ -494,6 +501,18 @@ class State:
         cache.refresh()
         current = self._current_entry()
         sess = session_snapshot(current) if current else {}
+
+        # Auto-trigger Touch Grass on rising-edge crossing of CRIT_PCT. The
+        # _grass_armed flag prevents re-triggering after a manual or auto
+        # dismiss — pct must dip below the threshold and cross back up to
+        # re-arm.
+        ru_pct = scrape_state.data.get("five_hour_pct")
+        if isinstance(ru_pct, (int, float)):
+            if ru_pct >= CRIT_PCT and self._grass_armed and not self.grass_required:
+                self.grass_required = True
+                self._grass_armed = False
+            elif ru_pct < CRIT_PCT:
+                self._grass_armed = True
 
         # Build "other live sessions" list, excluding current. If no shells
         # are open at all, skip — otherwise we'd keep showing the last few
@@ -760,4 +779,5 @@ if __name__ == "__main__":
     print(f"Claude monitor on http://{HOST}:{PORT}")
     print(f"Watching: {CLAUDE_PROJECTS}")
     print(f"Scrape: every {SCRAPE_INTERVAL_SEC:.0f}s on success, {SCRAPE_RETRY_SEC:.0f}s on failure")
+    print(f"Touch Grass auto-trigger: 5h pct >= {CRIT_PCT:.0f}%")
     uvicorn.run(app, host=HOST, port=PORT, log_level="info")

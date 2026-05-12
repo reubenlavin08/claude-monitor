@@ -75,16 +75,36 @@
 </div>
 
 <div class="grass-gate" id="grass-gate" hidden>
-  <div class="grass-gate-inner">
-    <div class="grass-gate-eyebrow" id="grass-gate-eyebrow">crit · usage exceeded</div>
-    <div class="grass-gate-headline">TOUCH GRASS</div>
-    <div class="grass-gate-sub">to continue</div>
-    <div class="grass-gate-meta">
-      show real grass to the camera · waiting for
-      <span class="grass-gate-meta-hi" id="grass-gate-conf">confidence ≥ 0.85</span>
+  <div class="grass-gate-eyebrow">crit · usage exceeded</div>
+  <div class="grass-gate-main">
+    <div class="grass-gate-text">
+      <div class="grass-gate-headline">TOUCH GRASS</div>
+      <div class="grass-gate-sub">to continue</div>
+      <ol class="grass-gate-instr">
+        <li>open <b>IP Camera Lite</b> on your phone</li>
+        <li>start the server (port 8081, admin auth)</li>
+        <li>go outside · point at real grass</li>
+        <li>hold ≥ 1.5s above the threshold</li>
+      </ol>
     </div>
-    <div class="grass-gate-hint">[press G to dismiss locally · testing only]</div>
+    <div class="grass-gate-cam">
+      <div class="grass-gate-cam-label">live detector feed</div>
+      <div class="grass-gate-cam-frame">
+        <img id="grass-gate-stream" alt="cam feed">
+      </div>
+      <div class="grass-gate-conf-row">
+        <span class="grass-gate-conf-tag">grass</span>
+        <span class="grass-gate-conf-num" id="grass-gate-conf">—</span>
+        <span class="grass-gate-conf-thresh">/ 0.85</span>
+      </div>
+      <div class="grass-gate-bar-wrap">
+        <div class="grass-gate-bar" id="grass-gate-bar"></div>
+        <div class="grass-gate-bar-marker"></div>
+      </div>
+      <div class="grass-gate-status" id="grass-gate-status">—</div>
+    </div>
   </div>
+  <div class="grass-gate-hint">[G: dismiss this tab 30s · Shift+G or D: server dismiss]</div>
 </div>
 
 <script src="/static/app.js"></script>

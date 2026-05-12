@@ -69,6 +69,7 @@ Pi has **zero code** — it's just a browser.
 | `C:\Users\User\claude-monitor\.venv\` | Python virtualenv (do not delete) |
 | `C:\Users\User\claude-monitor\start.bat` | One-click launcher |
 | `C:\Users\User\claude-monitor\debug-logs\` | Used by the legacy `--debug=api` path (not used by the scraper) |
+| `C:\Users\User\claude-monitor\pi\` | Pi-side scripts (LED matrix driver + animations). Copy to the Pi to run. |
 | `C:\Users\User\OneDrive\Documents\WindowsPowerShell\Microsoft.PowerShell_profile.ps1` | Defines a `claude` function that wraps real claude with `--debug=api --debug-file ...`. Was added for an earlier approach that turned out to be unnecessary; harmless to keep. |
 
 ---
@@ -285,6 +286,39 @@ New-NetFirewallRule -DisplayName "Claude Monitor" -Direction Inbound -LocalPort 
 # 4. Test
 # Browser → http://localhost:8765
 ```
+
+---
+
+## Pi-side LED matrix (AIP1640 8x16)
+
+In addition to the 7" Chromium-kiosk screen, the Pi has an **8x16 LED matrix**
+wired up for ambient animations / status indicators.
+
+| Wire | Pi pin |
+|---|---|
+| CLK (silkscreened `SCL`) | GPIO 6 (header pin 31) |
+| DIN (silkscreened `SDA`) | GPIO 5 (header pin 29) |
+| VCC | 5V or 3.3V (module-dependent) |
+| GND | GND |
+
+The driver chip is **AIP1640** — a TM1640 clone with a custom bit-banged
+2-wire serial protocol. It is *not* I2C, so the standard `i2cdetect` /
+`smbus` tooling will not find it, and the regular I2C pins (GPIO 2/3) are
+unused by this device.
+
+**Code:** [`pi/aip1640.py`](pi/aip1640.py) — driver class
+**Demo:** [`pi/plane.py`](pi/plane.py) — scrolling airplane animation
+
+To copy to the Pi (from the Windows desktop):
+```powershell
+scp C:\Users\User\claude-monitor\pi\*.py pi@<pi-ip>:~/led/
+ssh pi@<pi-ip> "cd ~/led && python3 plane.py"
+```
+
+If `RPi.GPIO` isn't on the Pi: `sudo apt install -y python3-rpi.gpio`.
+
+If the airplane renders mirrored or upside-down, the `render()` function
+in `plane.py` takes `flip_h` / `flip_v` flags.
 
 ---
 
