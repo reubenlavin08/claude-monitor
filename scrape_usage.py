@@ -50,7 +50,18 @@ def _resolve_claude_cmd() -> str:
 CLAUDE_CMD = _resolve_claude_cmd()
 
 
-ANSI_RE = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]|\x1b\][^\x07]*\x07|\x1b[=>]")
+# Modern Claude Code (>=2.1.140) terminates OSC sequences with ST (\x1b\\),
+# not BEL (\x07). The old OSC branch (`\x1b\][^\x07]*\x07`) would greedily
+# eat the entire TUI buffer hunting for a BEL that never arrives, deleting
+# the human-readable text the scraper needs to detect. This regex handles
+# both terminators, plus CSI with private-mode params (<, >, =, space) and
+# 7-bit DCS/PM/APC sequences.
+ANSI_RE = re.compile(
+    r"\x1b\[[0-?]*[ -/]*[@-~]"             # CSI
+    r"|\x1b\][^\x1b\x07]*(?:\x07|\x1b\\)"  # OSC, terminated by BEL or ST
+    r"|\x1b[PX^_][^\x1b]*\x1b\\"            # DCS / SOS / PM / APC
+    r"|\x1b[=>NMcDEHM78]"                   # 2-byte ESC sequences
+)
 
 # The /usage dialog renders with TUI spacing quirks ("16%used" / "16% used")
 # so detect with a tolerant regex that matches what the parser will accept.
@@ -121,7 +132,9 @@ def scrape(timeout: float = 45.0, debug_path: str | None = None) -> dict[str, An
 
     proc = None
     try:
-        proc = PtyProcess.spawn(CLAUDE_CMD, dimensions=(40, 140))
+        spawn_env = dict(os.environ)
+        spawn_env["DISABLE_AUTOUPDATER"] = "1"
+        proc = PtyProcess.spawn(CLAUDE_CMD, dimensions=(40, 140), env=spawn_env)
     except Exception as e:
         return {"error": f"spawn failed: {e}", "error_kind": "spawn_failed"}
 
@@ -168,6 +181,12 @@ def scrape(timeout: float = 45.0, debug_path: str | None = None) -> dict[str, An
                 break
 
         if not ready:
+            if debug_path:
+                try:
+                    with open(debug_path, "w", encoding="utf-8") as f:
+                        f.write(buf)
+                except OSError:
+                    pass
             return {
                 "error": "claude prompt never appeared",
                 "error_kind": "prompt_timeout",
